@@ -5,7 +5,6 @@ on:
     paths:
       - '**/*.tf'
       - '.github/workflows/**.yml'
-      
 
 env:
   INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
@@ -30,11 +29,13 @@ jobs:
           curl -s https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
           echo "$HOME/.infracost/bin" >> $GITHUB_PATH
 
-      - name: Terraform Init
-        run: terraform init
+      - name: Write GCP credentials to file
+        run: echo '${{ secrets.GCP_CREDENTIALS_JSON }}' > key.json
 
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan.binary -var="gcp_credentials=${GOOGLE_CREDENTIALS_JSON}"
+      - name: Terraform Init & Plan
+        run: |
+          terraform init
+          terraform plan -out=tfplan.binary -var="gcp_credentials=$(cat key.json | base64 | tr -d '\n')"
 
       - name: Convert Plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
@@ -47,17 +48,19 @@ jobs:
             --format json \
             --out-file infracost-output.json
 
+      - name: Install gcloud CLI and authenticate
+        run: |
+          sudo apt-get update && sudo apt-get install -y google-cloud-sdk
+          echo '${{ secrets.GCP_CREDENTIALS_JSON }}' > key.json
+          gcloud auth activate-service-account --key-file=key.json
+          gcloud config set project ${{ env.GCP_PROJECT_ID }}
+          gcloud auth application-default login --quiet < /dev/null || true
+
       - name: Generate Recommendation using Vertex AI
         run: |
-          echo '${{ env.GOOGLE_CREDENTIALS_JSON }}' > key.json
-
-          ACCESS_TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
-            --data "{\"grant_type\":\"urn:ietf:params:oauth:grant-type:jwt-bearer\",\"assertion\":\"$(jq -r .private_key key.json | base64)\"}" \
-            "https://oauth2.googleapis.com/token" | jq -r '.access_token')
-
           PROMPT=$(jq -c '.' infracost-output.json)
           RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
             -H "Content-Type: application/json" \
             "https://us-central1-aiplatform.googleapis.com/v1/projects/${{ env.GCP_PROJECT_ID }}/locations/${{ env.GCP_LOCATION }}/publishers/google/models/${{ env.GCP_MODEL_ID }}:predict" \
             -d '{
