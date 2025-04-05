@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '**.tf'
+      - '.github/workflows/**.yml'
 
 jobs:
   infracost:
