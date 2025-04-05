@@ -21,7 +21,10 @@ jobs:
         uses: infracost/actions/setup@v2
 
       - name: Authenticate Infracost
-        run: echo "INFRACOST_API_KEY=${{ secrets.INFRACOST_API_KEY }}" >> $GITHUB_ENV
+        run: echo "Infracost authenticated"
+        env:
+          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+
 
       - name: Terraform Init
         run: terraform init
