@@ -1,4 +1,4 @@
-name: Infracost CI
+name: Infracost on Push or PR
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
         uses: hashicorp/setup-terraform@v2
 
       - name: Setup Infracost
-        uses: infracost/actions/setup@v2
+        uses: infracost/actions@v2
 
       - name: Terraform Init
         run: terraform init
@@ -36,38 +36,27 @@ jobs:
       - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
 
-      - name: Infracost Breakdown
+      - name: Run Infracost diff
         run: |
-          infracost breakdown --path tfplan.json \
-            --format=json \
-            --project-name=infracost-proj \
-            --out-file infracost-report/infracost-breakdown.json
+          infracost diff \
+            --path tfplan.json \
+            --project-name infracost-proj \
+            --format json \
+            --out-file infracost-output.json
 
-      - name: Infracost Diff
-        run: |
-          infracost diff --path tfplan.json \
-            --format=diff \
-            --project-name=infracost-proj \
-            --out-file=infracost-report/infracost-diff.txt
-
-      - name: Upload cost report to repository
-        run: |
-          mkdir -p infracost-report
-          echo "Commit SHA: $GITHUB_SHA" > infracost-report/meta.txt
-        shell: bash
-
-      - name: Commit cost report
+      - name: Save cost report to repo
         uses: EndBug/add-and-commit@v9
         with:
-          add: 'infracost-report'
-          message: 'chore: update infracost report'
+          message: "chore: update Infracost report"
+          add: 'infracost-output.json'
           default_author: github_actions
-          push: true
 
-      - name: Post cost estimate as PR comment
+      - name: Post Infracost comment on PR
         if: github.event_name == 'pull_request'
-        uses: infracost/gh-action-comment@v1
-        with:
-          path: tfplan.json
-          behavior: update
-          format: github-comment
+        run: |
+          infracost comment github \
+            --path infracost-output.json \
+            --repo $GITHUB_REPOSITORY \
+            --github-token ${{ secrets.GITHUB_TOKEN }} \
+            --pull-request ${{ github.event.pull_request.number }} \
+            --behavior update
