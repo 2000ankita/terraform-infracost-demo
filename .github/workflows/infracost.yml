@@ -44,4 +44,7 @@ jobs:
           infracost diff --path tfplan.json \
                --format diff \
                --project-name=infracost-proj
+        env:
+          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+
 
