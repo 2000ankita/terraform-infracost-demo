@@ -30,12 +30,23 @@ jobs:
           echo "$HOME/.infracost/bin" >> $GITHUB_PATH
 
       - name: Write GCP credentials to file
-        run: echo '${{ secrets.GCP_CREDENTIALS_JSON }}' > key.json
-
-      - name: Terraform Init & Plan
+        shell: bash
         run: |
-          terraform init
-          terraform plan -out=tfplan.binary -var="gcp_credentials=$(cat key.json | base64 | tr -d '\n')"
+          cat <<EOF > key.json
+          ${{ secrets.GCP_CREDENTIALS_JSON }}
+          EOF
+
+      - name: Encode credentials for Terraform
+        id: encode_creds
+        run: |
+          CREDS=$(base64 -w 0 key.json)
+          echo "creds_b64=$CREDS" >> $GITHUB_OUTPUT
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan.binary -var="gcp_credentials=${{ steps.encode_creds.outputs.creds_b64 }}"
 
       - name: Convert Plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
@@ -48,29 +59,23 @@ jobs:
             --format json \
             --out-file infracost-output.json
 
-      - name: Install gcloud CLI and authenticate
-        run: |
-          sudo apt-get update && sudo apt-get install -y google-cloud-sdk
-          echo '${{ secrets.GCP_CREDENTIALS_JSON }}' > key.json
-          gcloud auth activate-service-account --key-file=key.json
-          gcloud config set project ${{ env.GCP_PROJECT_ID }}
-          gcloud auth application-default login --quiet < /dev/null || true
-
       - name: Generate Recommendation using Vertex AI
         run: |
+          ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
+
           PROMPT=$(jq -c '.' infracost-output.json)
           RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             "https://us-central1-aiplatform.googleapis.com/v1/projects/${{ env.GCP_PROJECT_ID }}/locations/${{ env.GCP_LOCATION }}/publishers/google/models/${{ env.GCP_MODEL_ID }}:predict" \
             -d '{
-              "instances": [{
+              "instances": [ {
                 "content": "You are a FinOps AI. Analyze this Infracost report and give cloud cost optimization recommendations:\n'"$PROMPT"'"
               }]
             }')
 
           echo "$RESPONSE" > genai-response.json
-          echo "🔍 GenAI Recommendation:"
+          echo "GenAI Recommendation:"
           jq '.predictions[0].content' genai-response.json
 
       - name: Upload GenAI Response as Artifact
