@@ -1,33 +1,29 @@
-name: Infracost + GenAI Recommendation
+name: Infracost with Vertex AI Recommendation
 
 on:
   push:
     paths:
       - '**.tf'
       - '.github/workflows/**.yml'
-  pull_request:
-    paths:
-      - '**.tf'
 
 env:
   INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
   GOOGLE_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
   GCP_PROJECT_ID: infracost-proj
   GCP_LOCATION: us-central1
-  GCP_MODEL_ID: chat-bison
+  GCP_MODEL_ID: text-bison
 
 jobs:
-  cost-analysis:
+  infracost:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
-      - name: Install Infracost
+      - name: Install Infracost CLI
         run: |
           curl -s https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
           echo "$HOME/.infracost/bin" >> $GITHUB_PATH
@@ -38,10 +34,10 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -out=tfplan.binary -var="gcp_credentials=${GOOGLE_CREDENTIALS}"
 
-      - name: Convert Plan to JSON
+      - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
 
-      - name: Run Infracost
+      - name: Run Infracost diff
         run: |
           infracost diff \
             --path tfplan.json \
@@ -49,54 +45,42 @@ jobs:
             --format json \
             --out-file infracost-output.json
 
-      - name: Generate Access Token for GenAI
-        id: auth
+      - name: Extract summarized cost data
+        id: summarize
         run: |
-          echo "${GOOGLE_CREDENTIALS}" > key.json
+          echo "📊 Extracting summary from Infracost output..."
+          SUMMARY=$(jq '[.projects[].diff.resources[] | {name, hourlyCost, monthlyCost}]' infracost-output.json | head -c 2500)
+          echo "SUMMARY<<EOF" >> $GITHUB_ENV
+          echo "$SUMMARY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Get GenAI Access Token
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > key.json
           ACCESS_TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
-            -d @key.json \
-            "https://oauth2.googleapis.com/token?grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=$(jq -r @json key.json)" || true)
-          export ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
+            -d @"key.json" "https://oauth2.googleapis.com/token?grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=$(jq -r '.private_key' key.json)" \
+            | jq -r '.access_token')
           echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
-      - name: GenAI Recommendation using Vertex AI
+      - name: Get Vertex AI Recommendation
         run: |
-          PROMPT=$(cat infracost-output.json | jq -r tostring)
-
+          echo "🧠 Asking Vertex AI for optimization suggestions..."
+          REQUEST_PAYLOAD=$(cat <<EOF
+          {
+            "instances": [
+              {
+                "prompt": "You are a cloud FinOps expert. Here is the cost summary:\n${SUMMARY}\n\nPlease recommend cost optimizations based on this data."
+              }
+            ]
+          }
+          EOF
+          )
           RESPONSE=$(curl -s -X POST \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            "https://us-central1-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GCP_MODEL_ID}:predict" \
-            -d '{
-              "instances": [
-                {
-                  "messages": [
-                    {
-                      "author": "user",
-                      "content": "You are a FinOps expert AI. Please analyze this Infracost report and give me cost optimization suggestions:\n'"$PROMPT"'"
-                    }
-                  ]
-                }
-              ]
-            }')
+            -d "$REQUEST_PAYLOAD" \
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GCP_MODEL_ID}:predict")
 
           echo "$RESPONSE" > genai-response.json
           echo "🔍 GenAI Recommendation:"
-          jq -r '.predictions[0].candidates[0].content' genai-response.json
-
-      - name: Save Recommendation
-        uses: EndBug/add-and-commit@v9
-        with:
-          message: "chore: update GenAI recommendation"
-          add: 'genai-response.json'
-          default_author: github_actions
-
-      - name: Post Infracost comment on PR
-        if: github.event_name == 'pull_request'
-        run: |
-          infracost comment github \
-            --path infracost-output.json \
-            --repo $GITHUB_REPOSITORY \
-            --github-token ${{ secrets.GITHUB_TOKEN }} \
-            --pull-request ${{ github.event.pull_request.number }} \
-            --behavior update
+          jq -r '.predictions[0].content' genai-response.json
