@@ -45,4 +45,3 @@ jobs:
                --format diff \
                --project-name=infracost-proj
 
-#
