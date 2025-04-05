@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - '**/*.tf'
+      - '.github/workflows/**.yml'
+      
 
 env:
   INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
@@ -73,3 +75,4 @@ jobs:
         with:
           name: genai-recommendations
           path: genai-response.json
+#
