@@ -38,12 +38,6 @@ jobs:
           echo "creds_b64=$CREDS" >> $GITHUB_OUTPUT
 
 
-      - name: Encode credentials for Terraform
-        id: encode_creds
-        run: |
-          CREDS=$(base64 -w 0 key.json)
-          echo "creds_b64=$CREDS" >> $GITHUB_OUTPUT
-
       - name: Terraform Init
         run: terraform init
 
