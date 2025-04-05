@@ -38,5 +38,6 @@ jobs:
       - name: Run Infracost
         run: |
           infracost diff --path tfplan.json \
-                         --format table \
-                         --project-name=infracost-proj
+               --format diff \
+               --project-name=infracost-proj
+
