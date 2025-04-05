@@ -8,7 +8,6 @@ on:
 
 env:
   INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-  GOOGLE_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_LOCATION: us-central1
   GCP_MODEL_ID: chat-bison
@@ -29,14 +28,12 @@ jobs:
           curl -s https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
           echo "$HOME/.infracost/bin" >> $GITHUB_PATH
 
-      - name: Write and encode GCP credentials
+      - name: Save and encode GCP credentials
         id: encode_creds
-        shell: bash
         run: |
-          echo "${{ secrets.GCP_CREDENTIALS_JSON }}" > key.json
+          echo '${{ secrets.GCP_CREDENTIALS_JSON }}' > key.json
           CREDS=$(cat key.json | base64 | tr -d '\n')
           echo "creds_b64=$CREDS" >> $GITHUB_OUTPUT
-
 
       - name: Terraform Init
         run: terraform init
@@ -65,13 +62,13 @@ jobs:
             -H "Content-Type: application/json" \
             "https://us-central1-aiplatform.googleapis.com/v1/projects/${{ env.GCP_PROJECT_ID }}/locations/${{ env.GCP_LOCATION }}/publishers/google/models/${{ env.GCP_MODEL_ID }}:predict" \
             -d '{
-              "instances": [ {
+              "instances": [{
                 "content": "You are a FinOps AI. Analyze this Infracost report and give cloud cost optimization recommendations:\n'"$PROMPT"'"
               }]
             }')
 
           echo "$RESPONSE" > genai-response.json
-          echo "GenAI Recommendation:"
+          echo "🔍 GenAI Recommendation:"
           jq '.predictions[0].content' genai-response.json
 
       - name: Upload GenAI Response as Artifact
