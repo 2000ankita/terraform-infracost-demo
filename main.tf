@@ -1,5 +1,5 @@
 provider "google" {
-  credentials = file("C:\\Users\\Dell\\Downloads\\infracost-proj-5b72afbd5be2.json")
+  credentials = var.gcp_credentials
   project = var.project_id
   region  = var.region
 }
