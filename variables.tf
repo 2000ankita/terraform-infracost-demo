@@ -11,6 +11,6 @@ variable "service_account_email" {
     default = "terraform-sa-key@infracost-proj.iam.gserviceaccount.com"
 }
 variable "gcp_credentials" {
-  description = "Base64 encoded GCP credentials"
+  description = "GCP credentials as a JSON string"
   type        = string
 }
