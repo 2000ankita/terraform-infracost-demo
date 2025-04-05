@@ -66,7 +66,7 @@ jobs:
 
       - name: Post cost estimate as PR comment
         if: github.event_name == 'pull_request'
-        uses: infracost/gh-action-comment@v3
+        uses: infracost/gh-action-comment@v1
         with:
           path: tfplan.json
           behavior: update
