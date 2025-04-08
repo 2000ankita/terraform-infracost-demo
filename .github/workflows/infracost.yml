@@ -1,4 +1,4 @@
-name: Infracost with GPT Recommendations
+name: Infracost with Vertex AI Recommendation
 
 on:
   push:
@@ -8,7 +8,10 @@ on:
 
 env:
   INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  GOOGLE_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+  GCP_PROJECT_ID: infracost-proj
+  GCP_LOCATION: us-central1
+  GCP_MODEL_ID: text-bison
 
 jobs:
   infracost:
@@ -29,7 +32,7 @@ jobs:
         run: terraform init
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan.binary
+        run: terraform plan -out=tfplan.binary -var="gcp_credentials=${GOOGLE_CREDENTIALS}"
 
       - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
@@ -46,28 +49,38 @@ jobs:
         id: summarize
         run: |
           echo "📊 Extracting summary from Infracost output..."
-          SUMMARY=$(jq '[.projects[].diff.resources[] | {name, hourlyCost, monthlyCost}]' infracost-output.json | head -c 2000)
+          SUMMARY=$(jq '[.projects[].diff.resources[] | {name, hourlyCost, monthlyCost}]' infracost-output.json | head -c 2500)
           echo "SUMMARY<<EOF" >> $GITHUB_ENV
           echo "$SUMMARY" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Ask OpenAI for Optimization Suggestions
+      - name: Get GenAI Access Token
         run: |
-          echo "💬 Calling OpenAI..."
-          PROMPT="You are a cloud cost optimization expert. Here's an Infracost summary:\n${SUMMARY}\n\nPlease suggest cost optimizations."
+          echo "$GOOGLE_CREDENTIALS" > key.json
+          ACCESS_TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
+            -d @"key.json" "https://oauth2.googleapis.com/token?grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=$(jq -r '.private_key' key.json)" \
+            | jq -r '.access_token')
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
-          RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
-            -H "Authorization: Bearer $OPENAI_API_KEY" \
+      - name: Get Vertex AI Recommendation
+        run: |
+          echo "🧠 Asking Vertex AI for optimization suggestions..."
+          REQUEST_PAYLOAD=$(cat <<EOF
+          {
+            "instances": [
+              {
+                "prompt": "You are a cloud FinOps expert. Here is the cost summary:\n${SUMMARY}\n\nPlease recommend cost optimizations based on this data."
+              }
+            ]
+          }
+          EOF
+          )
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d @- <<EOF
-            {
-              "model": "gpt-3.5-turbo",
-              "messages": [{"role": "user", "content": "${PROMPT}"}],
-              "temperature": 0.7
-            }
-            EOF
-            )
+            -d "$REQUEST_PAYLOAD" \
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GCP_MODEL_ID}:predict")
 
-          echo "$RESPONSE" > openai-response.json
-          echo "🔍 GPT Recommendation:"
-          jq -r '.choices[0].message.content' openai-response.json
+          echo "$RESPONSE" > genai-response.json
+          echo "🔍 GenAI Recommendation:"
+          jq -r '.predictions[0].content' genai-response.json
